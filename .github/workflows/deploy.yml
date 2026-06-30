@@ -1,104 +1,108 @@
-name: Deploy
+name: Go Deploy
 
 on:
+  push:
+    branches:
+      - main
   workflow_run:
-    workflows: ["CI"]
+    workflows: ["Go Build and Test"]
     types: [completed]
-    branches: [main]
-  workflow_dispatch:
-
-concurrency:
-  group: deploy-production
-  cancel-in-progress: false
+  workflow_dispatch: # Allows manual triggering
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
-
     environment:
-      name: production
-
+      name: development
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
-      - name: Package artifact
-        run: zip -r publish.zip . -x "*.git*"
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.x' # Use the latest Go 1.x version
+
+      - name: Install dependencies
+        run: |
+          go mod tidy
+          go mod download
+
+      - name: Build application
+        run: go build -o myapp -v ./... # Builds a binary named 'myapp'
 
       - name: Upload publish artifact
         uses: actions/upload-artifact@v4
         with:
-          name: app-publish
-          path: publish.zip
+          name: go-binary
+          path: myapp
 
-      # -------------------------------------------------------
-      # Option A: Deploy to Azure App Service
-      # Uncomment and add AZURE_WEBAPP_NAME + AZURE_PUBLISH_PROFILE in repo secrets
-      # -------------------------------------------------------
-      # - name: Deploy to Azure App Service
-      #   uses: azure/webapps-deploy@v3
+      # --- Deployment Options (Uncomment and configure one) ---
+
+      # Option 1: Deploy to Azure App Service
+      # - name: Deploy to Azure Web App
+      #   uses: azure/webapps-deploy@v2
       #   with:
-      #     app-name: ${{ secrets.AZURE_WEBAPP_NAME }}
-      #     publish-profile: ${{ secrets.AZURE_PUBLISH_PROFILE }}
-      #     package: publish.zip
+      #     app-name: 'your-azure-app-name'
+      #     slot-name: 'production' # or 'staging'
+      #     publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }} # Or use service principal
+      #     package: './myapp' # Path to your compiled Go binary
 
-      # -------------------------------------------------------
-      # Option B: Deploy to server via SSH (IIS / Linux self-hosted)
-      # Add SSH_HOST, SSH_USER, SSH_PRIVATE_KEY in repo secrets
-      # -------------------------------------------------------
-      # - name: Copy files to server via SCP
-      #   uses: appleboy/scp-action@v0.1.7
+      # Option 2: Deploy via SSH/SCP to a server
+      # - name: Deploy via SSH
+      #   uses: appleboy/scp-action@v0.1.7 # Or similar SSH action
       #   with:
       #     host: ${{ secrets.SSH_HOST }}
-      #     username: ${{ secrets.SSH_USER }}
+      #     username: ${{ secrets.SSH_USERNAME }}
       #     key: ${{ secrets.SSH_PRIVATE_KEY }}
-      #     source: "publish.zip"
-      #     target: "/var/www/myapp"
-      #
-      # - name: Restart app on server
-      #   uses: appleboy/ssh-action@v1.0.3
+      #     source: "myapp"
+      #     target: "/var/www/your-app/"
+      # - name: Restart service via SSH
+      #   uses: appleboy/ssh-action@v0.1.10
       #   with:
       #     host: ${{ secrets.SSH_HOST }}
-      #     username: ${{ secrets.SSH_USER }}
+      #     username: ${{ secrets.SSH_USERNAME }}
       #     key: ${{ secrets.SSH_PRIVATE_KEY }}
       #     script: |
-      #       cd /var/www/myapp
-      #       unzip -o publish.zip
-      #       systemctl restart myapp
+      #       sudo systemctl restart your-app-service
 
-      # -------------------------------------------------------
-      # Option C: Deploy to AWS Elastic Beanstalk
-      # Add AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, EB_APP_NAME, EB_ENV_NAME in secrets
-      # -------------------------------------------------------
+      # Option 3: Deploy to AWS Elastic Beanstalk
+      # - name: Generate deployment package
+      #   run: |
+      #     zip -r deploy.zip myapp Procfile .ebextensions/ # Include Procfile and .ebextensions if needed
       # - name: Deploy to AWS Elastic Beanstalk
-      #   uses: einaregilsson/beanstalk-deploy@v22
+      #   uses: einaregilsson/beanstalk-deploy@v21
       #   with:
       #     aws_access_key: ${{ secrets.AWS_ACCESS_KEY_ID }}
       #     aws_secret_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      #     application_name: ${{ secrets.EB_APP_NAME }}
-      #     environment_name: ${{ secrets.EB_ENV_NAME }}
-      #     region: us-east-1
+      #     application_name: your-beanstalk-app
+      #     environment_name: your-beanstalk-env
       #     version_label: ${{ github.sha }}
-      #     deployment_package: publish.zip
+      #     region: us-east-1
+      #     deployment_package: deploy.zip
 
-      # -------------------------------------------------------
-      # Option D: Deploy to Docker / Kubernetes
-      # Add DOCKER_USERNAME, DOCKER_PASSWORD in repo secrets
-      # -------------------------------------------------------
+      # Option 4: Build and Push Docker Image / Deploy to Kubernetes
+      # - name: Set up Docker Buildx
+      #   uses: docker/setup-buildx-action@v3
       # - name: Log in to Docker Hub
       #   uses: docker/login-action@v3
       #   with:
       #     username: ${{ secrets.DOCKER_USERNAME }}
       #     password: ${{ secrets.DOCKER_PASSWORD }}
-      #
       # - name: Build and push Docker image
       #   uses: docker/build-push-action@v5
       #   with:
       #     context: .
       #     push: true
-      #     tags: ${{ secrets.DOCKER_USERNAME }}/myapp:${{ github.sha }}
+      #     tags: your-docker-repo/your-app:${{ github.sha }}
+      #     file: ./Dockerfile # Ensure you have a Dockerfile
+      # - name: Deploy to Kubernetes (example using kubectl)
+      #   uses: azure/k8s-set-context@v3 # Or other actions to set K8s context
+      #   with:
+      #     method: kubeconfig
+      #     kubeconfig: ${{ secrets.KUBECONFIG }}
+      # - name: Update Kubernetes deployment
+      #   run: |
+      #     kubectl set image deployment/your-app your-app=your-docker-repo/your-app:${{ github.sha }} -n your-namespace
+      #     kubectl rollout status deployment/your-app -n your-namespace
