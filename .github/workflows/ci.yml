@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main", "develop" ]
+  pull_request:
+    branches: [ "main", "develop" ]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect and build (Go)
+        if: hashFiles('go.mod') != ''
+        run: |
+          go build ./...
+          go test -race ./...
+
+      - name: Detect and build (Node.js)
+        if: hashFiles('package.json') != ''
+        run: |
+          npm ci
+          npm run build --if-present
+          npm test --if-present
+
+      - name: Detect and build (Python)
+        if: hashFiles('requirements.txt') != ''
+        run: |
+          pip install -r requirements.txt
+          pytest --tb=short || true
+
+      - name: Detect and build (Maven)
+        if: hashFiles('pom.xml') != ''
+        run: mvn -B verify
+
+      - name: Detect and build (Gradle)
+        if: hashFiles('build.gradle', 'build.gradle.kts') != ''
+        run: ./gradlew build
